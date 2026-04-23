@@ -1,0 +1,13 @@
+fastapi
+python-socketio
+python-dotenv
+langchain
+langchain-google-genai
+paramiko
+pandas
+scikit-learn
+twilio
+mailjet-rest
+telepot
+instagrapi
+uvicorn
