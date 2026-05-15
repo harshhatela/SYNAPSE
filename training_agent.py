@@ -1,47 +1,53 @@
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor
-import pickle
+from tool_schemas import MLTrainInput, MLTrainOutput
 import os
 
 class TrainingAgent:
-    """A tool to train a hardcoded model from a local dataset file."""
+    """A tool to train a model from a configurable dataset file."""
 
-    # THE FIX IS ON THE NEXT LINE:
-    # We add a placeholder argument to accept the agent's default input.
-    def train_startup_model(self, dummy_input: str = "") -> str:
-        """
-        Trains a model on the hardcoded '~/train/50_startup.csv' file
-        to predict the 'Profit' column. It takes no real arguments.
-        """
-        # Hardcoded file path and target column
-        file_path = os.path.expanduser('~/train/50_startup.csv')
-        target_column = 'Profit'
-
+    def train_startup_model(self, file_path: str = None, target_column: str = None) -> str:
+        """Train a RandomForest model on the given CSV. Defaults to 50_startup.csv / Profit."""
+        csv_path = file_path or os.path.expanduser("~/train/50_startup.csv")
+        target = target_column or "Profit"
         try:
-            if not os.path.exists(file_path):
-                return f"Error: The file was not found at {file_path}. Please ensure it exists."
+            import pandas as pd
+            from sklearn.model_selection import train_test_split
+            from sklearn.ensemble import RandomForestRegressor
+            from sklearn.metrics import r2_score, mean_absolute_error
+            import pickle
 
-            df = pd.read_csv(file_path)
-            
-            # One-hot encode the 'State' column as it's categorical
-            df = pd.get_dummies(df, columns=['State'], drop_first=True)
-            
-            if target_column not in df.columns:
-                return f"Error: Target column '{target_column}' not found."
+            df = pd.read_csv(csv_path)
+            if target not in df.columns:
+                return MLTrainOutput(
+                    success=False, summary=f"Column '{target}' not found in {csv_path}",
+                    error=f"Available columns: {list(df.columns)}"
+                ).model_dump_json()
 
-            X = df.drop(target_column, axis=1)
-            y = df[target_column]
+            df = pd.get_dummies(df, drop_first=True)
+            X = df.drop(columns=[target])
+            y = df[target]
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
             model = RandomForestRegressor(n_estimators=100, random_state=42)
             model.fit(X_train, y_train)
-            score = model.score(X_test, y_test)
+            preds = model.predict(X_test)
+
+            metrics = {
+                "r2": round(r2_score(y_test, preds), 4),
+                "mae": round(mean_absolute_error(y_test, preds), 2),
+            }
 
             model_path = "startup_model.pkl"
-            with open(model_path, 'wb') as f:
+            with open(model_path, "wb") as f:
                 pickle.dump(model, f)
-            
-            return f"Startup model training complete. R^2 Score: {score:.2f}. Model saved to {model_path}"
+
+            return MLTrainOutput(
+                success=True,
+                summary=f"Model trained. R2={metrics['r2']}, MAE={metrics['mae']}",
+                model_path=model_path,
+                metrics=metrics,
+            ).model_dump_json()
+
         except Exception as e:
-            return f"An error occurred during model training: {str(e)}"
+            return MLTrainOutput(
+                success=False, summary=f"Training failed: {e}", error=str(e)
+            ).model_dump_json()
