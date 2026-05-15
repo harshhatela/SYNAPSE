@@ -1,129 +1,129 @@
 from dotenv import load_dotenv
 load_dotenv()
-import logging
-logging.basicConfig(level=logging.DEBUG)
 
 import asyncio
+import logging
 import os
+
 import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.tools import Tool
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel, Field
 
-# Import all our specialized agents
 from linux_agent import LinuxAgent
 from docker_agent import DockerTool as DockerAgent
 from aws_agent import AWSAgent
 from training_agent import TrainingAgent
 from notification_agent import NotificationAgent
+from model_router import ModelRouter
 
-# Define the input schema for CreateRemoteFile
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger("synapse.main")
+
 class RemoteFileInput(BaseModel):
     remote_path: str = Field(description="Remote file path, e.g., '/path/to/file'")
     content: str = Field(description="File content to write at the remote path")
     mode: int = Field(default=None, description="Optional file mode/permissions, e.g., 0o755")
 
-# Define the input schema for the TrainLocalModel tool
 class LocalTrainerInput(BaseModel):
-    file_path: str = Field(description="The local file path to the CSV file to be used for training, e.g., '/path/to/file.csv'.")
-    target_column: str = Field(description="The name of the column in the CSV file that the model should predict.")
+    file_path: str = Field(description="Local path to the CSV file for training")
+    target_column: str = Field(description="Column name the model should predict")
 
-# Initialize FastAPI app & Socket.IO
-fastapi_app = FastAPI()
+fastapi_app = FastAPI(title="SYNAPSE Control Plane")
 fastapi_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:5173")],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins="*")
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app)
 
-# Instantiate all tool providers
 linux_agent = LinuxAgent()
 docker_agent = DockerAgent()
 aws_agent = AWSAgent()
 training_agent = TrainingAgent()
 notification_agent = NotificationAgent()
 
-# Create a clear, flexible toolbelt of micro-tasks
 tools = [
-    Tool(
-        name="RunShellCommand",
-        func=linux_agent.run_command,
-        description="Use to run a single, general-purpose Linux shell command on a remote server."
-    ),
-    Tool(
-        name="CreateRemoteFile",
-        func=linux_agent.create_file,
-        args_schema=RemoteFileInput,
-        description="Create a file with specific content at a given path on the remote server."
-    ),
-    Tool(
-        name="RunDockerCommand",
-        func=docker_agent.run_command,
-        description="Use to run a single Docker CLI command on the remote server via shell."
-    ),
-    Tool(
-        name="RunAWSCommand",
-        func=aws_agent.run_cli,
-        description="Use for executing any AWS CLI command."
-    ),
-    Tool(
-    name="TrainStartupModel",
-    func=training_agent.train_startup_model,
-    description="Use this specific tool to train the machine learning model for the 50_startup.csv dataset. It takes no arguments."
-    ),
-    Tool(
-        name="SendEmailNotification",
-        func=notification_agent.notify_by_email,
-        description="Send an email notification with a subject and body when a task is finished."
-    ),
-    Tool(
-        name="SendSMSNotification",
-        func=notification_agent.notify_by_sms,
-        description="Send an SMS notification when a task is finished."
-    ),
-    Tool(
-        name="SendTelegramNotification",
-        func=notification_agent.notify_by_telegram,
-        description="Send a Telegram notification when a task is finished."
-    ),
+    Tool(name="RunShellCommand", func=linux_agent.run_command,
+         description="Run a single Linux shell command on the remote server."),
+    Tool(name="CreateRemoteFile", func=linux_agent.create_file,
+         args_schema=RemoteFileInput,
+         description="Create a file with specific content at a given remote path."),
+    Tool(name="RunDockerCommand", func=docker_agent.run_command,
+         description="Run a single Docker CLI command on the remote server via SSH."),
+    Tool(name="RunAWSCommand", func=aws_agent.run_cli,
+         description="Execute any AWS CLI command."),
+    Tool(name="TrainStartupModel", func=training_agent.train_startup_model,
+         description="Train the ML model on the 50_startup.csv dataset. Takes no arguments."),
+    Tool(name="SendEmailNotification", func=notification_agent.notify_by_email,
+         description="Send an email notification with subject and body."),
+    Tool(name="SendSMSNotification", func=notification_agent.notify_by_sms,
+         description="Send an SMS notification."),
+    Tool(name="SendTelegramNotification", func=notification_agent.notify_by_telegram,
+         description="Send a Telegram notification."),
 ]
 
-# Set up the LangChain agent with langgraph
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    google_api_key=os.getenv("GEMINI_API_KEY")
-)
-
-# Create the agent using langgraph's create_react_agent
+router = ModelRouter()
+llm = router.get_llm()
 agent_executor = create_react_agent(llm, tools)
+logger.info(f"SYNAPSE started. LLM provider: {router.current_provider}")
 
-# Define Socket.IO event handlers
 @sio.event
 async def connect(sid, environ):
-    print(f"Client connected: {sid}")
+    logger.info(f"Client connected: {sid}")
+    await sio.emit("provider_update", {"provider": router.current_provider}, to=sid)
 
 @sio.event
 async def disconnect(sid):
-    print(f"Client disconnected: {sid}")
+    logger.info(f"Client disconnected: {sid}")
 
-@sio.on('execute_natural_command')
+@sio.on("execute_natural_command")
 async def handle_command(sid, data):
-    query = data.get('command')
+    query = data.get("command", "").strip()
     if not query:
         return
+
+    full_response = []
     try:
-        result = await asyncio.to_thread(
-            agent_executor.invoke,
-            {"messages": [("human", query)]}
-        )
-        output = result.get('messages', [])[-1].content if result.get('messages') else 'No output from agent.'
+        async for event in agent_executor.astream_events(
+            {"messages": [{"role": "user", "content": query}]},
+            version="v2",
+        ):
+            kind = event["event"]
+
+            if kind == "on_chat_model_stream":
+                chunk = event["data"]["chunk"]
+                if chunk.content:
+                    await sio.emit("token", {"data": chunk.content}, to=sid)
+                    full_response.append(chunk.content)
+
+            elif kind == "on_tool_start":
+                await sio.emit("tool_call", {
+                    "tool": event["name"],
+                    "status": "running",
+                    "input": str(event["data"].get("input", {}))[:200],
+                }, to=sid)
+
+            elif kind == "on_tool_end":
+                await sio.emit("tool_call", {
+                    "tool": event["name"],
+                    "status": "done",
+                    "output": str(event["data"].get("output", ""))[:200],
+                }, to=sid)
+
+        await sio.emit("command_output", {"data": "".join(full_response)}, to=sid)
+
     except Exception as e:
-        output = f"An error occurred: {str(e)}"
-    await sio.emit('command_output', {'data': output}, to=sid)
+        error_msg = str(e)
+        logger.error(f"Agent error for sid={sid}: {error_msg}")
+        if any(w in error_msg.lower() for w in ["429", "rate limit", "quota"]):
+            await sio.emit("command_output", {
+                "data": f"Provider {router.current_provider} hit rate limit. Please retry."
+            }, to=sid)
+        else:
+            await sio.emit("command_output", {"data": f"Error: {error_msg}"}, to=sid)
