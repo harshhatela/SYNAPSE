@@ -17,6 +17,8 @@ from docker_agent import DockerTool as DockerAgent
 from aws_agent import AWSAgent
 from training_agent import TrainingAgent
 from notification_agent import NotificationAgent
+from github_actions_tool import github_actions_tool
+from tool_schemas import GitHubActionsInput
 from model_router import ModelRouter
 from agent_memory import agent_memory
 from agent_prompts import build_prompt
@@ -68,6 +70,12 @@ tools = [
          description="Send an SMS notification."),
     Tool(name="SendTelegramNotification", func=notification_agent.notify_by_telegram,
          description="Send a Telegram notification."),
+    Tool(
+        name="GitHubActions",
+        func=github_actions_tool,
+        args_schema=GitHubActionsInput,
+        description="Trigger GitHub Actions workflows, check run status, or list recent runs.",
+    ),
 ]
 
 router = ModelRouter()
