@@ -3,6 +3,7 @@ load_dotenv()
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
+import asyncio
 import os
 import socketio
 from fastapi import FastAPI
@@ -118,9 +119,10 @@ async def handle_command(sid, data):
     if not query:
         return
     try:
-        # Use invoke to process the natural language command
-        result = agent_executor.invoke({"messages": [("human", query)]})
-        # Extract the final response from the messages
+        result = await asyncio.to_thread(
+            agent_executor.invoke,
+            {"messages": [("human", query)]}
+        )
         output = result.get('messages', [])[-1].content if result.get('messages') else 'No output from agent.'
     except Exception as e:
         output = f"An error occurred: {str(e)}"
