@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from twilio.rest import Client as TwilioClient
 from mailjet_rest import Client as MailjetClient
 import telepot
+from tool_schemas import TelegramOutput, EmailOutput, SMSOutput
 
 class NotificationAgent:
     """Agent for sending notifications via SMS, Email, and Telegram."""
@@ -20,21 +21,29 @@ class NotificationAgent:
     def notify_by_sms(self, message: str) -> str:
         """Sends an SMS notification to your pre-configured phone number."""
         try:
-            self.twilio_client.messages.create(body=message, from_=self.twilio_number, to=self.my_phone)
-            return "SMS notification sent."
-        except Exception as e: return f"Error sending SMS: {e}"
+            msg = self.twilio_client.messages.create(
+                body=message, from_=self.twilio_number, to=self.my_phone
+            )
+            return SMSOutput(success=True, summary="SMS sent", message_sid=msg.sid).model_dump_json()
+        except Exception as e:
+            return SMSOutput(success=False, summary="SMS failed", error=str(e)).model_dump_json()
 
     def notify_by_email(self, subject: str, body: str) -> str:
         """Sends an email notification to your pre-configured email address."""
-        data = {'Messages': [{"From": {"Email": self.mailjet_sender, "Name": "SYNAPSE Agent"}, "To": [{"Email": self.my_email}], "Subject": subject, "TextPart": body}]}
+        data = {"Messages": [{"From": {"Email": self.mailjet_sender, "Name": "SYNAPSE Agent"},
+                              "To": [{"Email": self.my_email}], "Subject": subject, "TextPart": body}]}
         try:
-            self.mailjet_client.send.create(data=data)
-            return "Email notification sent."
-        except Exception as e: return f"Error sending email: {e}"
+            result = self.mailjet_client.send.create(data=data)
+            return EmailOutput(success=True, summary="Email sent",
+                               message_id=str(result.status_code)).model_dump_json()
+        except Exception as e:
+            return EmailOutput(success=False, summary="Email failed", error=str(e)).model_dump_json()
 
     def notify_by_telegram(self, message: str) -> str:
         """Sends a Telegram notification to your pre-configured chat."""
         try:
-            self.telegram_bot.sendMessage(self.my_telegram_id, message)
-            return "Telegram notification sent."
-        except Exception as e: return f"Error sending Telegram message: {e}"
+            result = self.telegram_bot.sendMessage(self.my_telegram_id, message)
+            return TelegramOutput(success=True, summary="Telegram message sent",
+                                  message_id=result.get("message_id")).model_dump_json()
+        except Exception as e:
+            return TelegramOutput(success=False, summary="Telegram failed", error=str(e)).model_dump_json()

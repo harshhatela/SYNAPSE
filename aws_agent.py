@@ -1,6 +1,8 @@
 import subprocess
 import os
 import shlex
+import json
+from tool_schemas import AWSOutput
 
 class AWSAgent:
     """A tool to interact with AWS by executing AWS CLI commands."""
@@ -38,10 +40,27 @@ class AWSAgent:
                 text=True,
                 check=True # This will raise an exception for non-zero exit codes
             )
-            return result.stdout.strip() if result.stdout else "Command executed successfully with no output."
-        
+            raw_stdout = result.stdout.strip() if result.stdout else ""
+            parsed = None
+            try:
+                parsed = json.loads(raw_stdout)
+            except Exception:
+                pass
+            return AWSOutput(
+                success=True, summary="AWS command succeeded",
+                raw_output=raw_stdout or "Command executed successfully with no output.",
+                parsed_data=parsed,
+            ).model_dump_json()
+
         except subprocess.CalledProcessError as e:
-            # Provide a more informative error message
-            return f"Error executing command: '{' '.join(e.cmd)}'. Stderr: {e.stderr.strip()}"
+            raw_stderr = e.stderr.strip() if e.stderr else f"Error executing command: '{' '.join(e.cmd)}'"
+            return AWSOutput(
+                success=False, summary="AWS command failed",
+                raw_output=raw_stderr, error=raw_stderr,
+            ).model_dump_json()
         except Exception as e:
-            return f"An unexpected error occurred: {str(e)}"
+            raw_stderr = str(e)
+            return AWSOutput(
+                success=False, summary="AWS command failed",
+                raw_output=raw_stderr, error=raw_stderr,
+            ).model_dump_json()

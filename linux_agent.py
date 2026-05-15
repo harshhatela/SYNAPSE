@@ -1,7 +1,9 @@
 import os
 import posixpath
 import logging
+import time
 import paramiko
+from tool_schemas import LinuxOutput
 
 
 class LinuxAgent:
@@ -27,16 +29,26 @@ class LinuxAgent:
     def run_command(self, command: str) -> str:
         """Runs a single shell command on the remote server."""
         client = self._get_ssh_client()
+        start = time.monotonic()
         try:
             stdin, stdout, stderr = client.exec_command(command)
             exit_code = stdout.channel.recv_exit_status()
-            out = stdout.read().decode('utf-8').strip()
-            err = stderr.read().decode('utf-8').strip()
+            out = stdout.read().decode("utf-8").strip()
+            err = stderr.read().decode("utf-8").strip()
+            elapsed = (time.monotonic() - start) * 1000
             if exit_code != 0:
                 self.logger.error("Command failed (%s): %s", exit_code, err)
-                return f"Error (Exit Code {exit_code}): {err}"
+                return LinuxOutput(
+                    success=False, summary=f"Command failed (exit {exit_code})",
+                    stdout=out, stderr=err, exit_code=exit_code,
+                    execution_time_ms=elapsed, error=err,
+                ).model_dump_json()
             self.logger.debug("Command succeeded: %s", out or "no output")
-            return out or "Command executed successfully."
+            return LinuxOutput(
+                success=True, summary="Command executed successfully",
+                stdout=out or "Command executed successfully.",
+                exit_code=exit_code, execution_time_ms=elapsed,
+            ).model_dump_json()
         finally:
             client.close()
 
