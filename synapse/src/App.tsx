@@ -5,6 +5,7 @@ import type { Message } from './components/ChatDisplay';
 import { InputBar } from './components/InputBar';
 import { EntryScreen } from './components/EntryScreen';
 import { ParticleBackground } from './components/ParticleBackground';
+import { ModelIndicator } from './components/ModelIndicator';
 
 function App() {
   const [showEntryScreen, setShowEntryScreen] = useState(true);
@@ -52,6 +53,9 @@ function App() {
             <p className={`text-xs uppercase tracking-widest ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
               {isConnected ? '● SYSTEM ONLINE' : '● CONNECTION LOST'}
             </p>
+            <div className="mt-1 flex justify-center">
+              <ModelIndicator />
+            </div>
           </header>
           <ChatDisplay messages={messages} isTyping={isTyping} />
           <InputBar onSendMessage={handleSendMessage} />
