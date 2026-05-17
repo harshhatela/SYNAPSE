@@ -37,7 +37,20 @@ function App() {
     };
     const onPlanGenerated = (data: { plan: Plan; replanned?: boolean }) => {
       setPlan(data.plan);
-      if (!data.replanned) setStepStatuses({});
+      if (data.replanned) {
+        // Keep only statuses for step IDs that exist in the new plan.
+        const liveIds = new Set(data.plan.steps.map((s) => s.step_id));
+        setStepStatuses((prev) => {
+          const next: StepStateMap = {};
+          for (const [k, v] of Object.entries(prev)) {
+            const id = Number(k);
+            if (liveIds.has(id)) next[id] = v;
+          }
+          return next;
+        });
+      } else {
+        setStepStatuses({});
+      }
     };
     const onStepStatus = (data: {
       step_id: number;
