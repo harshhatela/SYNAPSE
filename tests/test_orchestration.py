@@ -13,6 +13,12 @@ def test_needs_planning_long_or_compound():
     assert needs_planning("start a server, then check it") is True
 
 
+def test_needs_planning_intra_token_comma_is_not_compound():
+    # CLI argument with comma-joined values like "-n default,kube-system"
+    # should NOT trigger planning.
+    assert needs_planning("kubectl get pods -n a,b") is False
+
+
 def test_compose_final_all_done():
     plan = Plan(reasoning="r", steps=[
         PlanStep(step_id=1, description="d1", intended_tool="reasoning", success_criteria="ok"),

@@ -1,6 +1,9 @@
 from tool_schemas import Plan, StepResult
 
-_CONJUNCTIONS = (" and ", " then ", ",", ";")
+# Conjunctions that strongly suggest a multi-step intent.
+# Comma/semicolon must be followed by a space to avoid matching CLI flags
+# like "-n default,kube-system" where the comma is intra-token.
+_CONJUNCTIONS = (" and ", " then ", ", ", "; ")
 
 
 def needs_planning(message: str) -> bool:
