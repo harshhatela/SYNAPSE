@@ -100,3 +100,34 @@ class MLTrainOutput(ToolOutput):
     tool_name: str = "ml_train"
     model_path: Optional[str] = None
     metrics: Optional[dict] = None
+
+
+# ─── Kubernetes ──────────────────────────────────────────
+
+class KubectlCommandInput(BaseModel):
+    command: str  # kubectl arguments, e.g. "get pods", "apply -f deploy.yml"
+
+class KubectlOutput(ToolOutput):
+    tool_name: str = "kubectl"
+    stdout: str
+    stderr: Optional[str] = None
+    exit_code: int
+
+
+# ─── Planner / Executor ─────────────────────────────────
+
+class PlanStep(BaseModel):
+    step_id: int
+    description: str
+    intended_tool: str
+    success_criteria: str
+
+class Plan(BaseModel):
+    steps: list[PlanStep]
+    reasoning: str
+
+class StepResult(BaseModel):
+    step_id: int
+    status: Literal["done", "failed"]
+    summary: str
+    tool_outputs: list[dict] = []
