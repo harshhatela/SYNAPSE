@@ -1,30 +1,77 @@
-from linux_agent import LinuxAgent
+import json
+import shlex
+import logging
+import subprocess
+import sys
+from typing import Optional
+
+from tool_schemas import DockerOutput
+
+logger = logging.getLogger(__name__)
 
 
-class DockerTool:
-    """A tool to execute Docker commands on the remote server."""
-    def __init__(self):
-        # Reuse the LinuxAgent to execute commands via SSH
-        self.ssh_tool = LinuxAgent()
+class LocalDockerAgent:
+    """Runs `docker <command>` on the local host via subprocess.
 
-    def list_containers(self, args: str = "") -> str:
-        """
-        Lists Docker containers. Accepts optional arguments like '-a' to show all.
-        Example: list_containers(args="-a")
-        """
-        # Use the correct LinuxAgent method name
-        return self.ssh_tool.run_command(f"docker ps {args}")
+    Docker Desktop (or `docker` on PATH) must be installed and running.
+    No SSH involved — host-local only.
+    """
 
-    def get_logs(self, container_id: str) -> str:
-        """
-        Fetches the logs for a specific Docker container by its ID.
-        Example: get_logs(container_id="a1b2c3d4e5f6")
-        """
-        return self.ssh_tool.run_command(f"docker logs {container_id}")
+    def __init__(self, timeout: int = 120):
+        self.timeout = timeout
+        self._detect_logged = False
+
+    def detect(self) -> Optional[str]:
+        """Returns None if docker is available, else an error string."""
+        try:
+            cp = subprocess.run(
+                ["docker", "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if cp.returncode != 0:
+                return f"docker --version exited {cp.returncode}: {cp.stderr.strip()}"
+            return None
+        except FileNotFoundError:
+            return "docker binary not found on PATH (install Docker Desktop)"
+        except Exception as e:
+            return f"docker detect failed: {e}"
 
     def run_command(self, command: str) -> str:
-        """
-        Runs any generic Docker command.
-        Example: run_command(command="pull nginx:latest")
-        """
-        return self.ssh_tool.run_command(f"docker {command}")
+        """Run `docker <command>` locally. Returns JSON-serialized DockerOutput."""
+        argv = ["docker", *shlex.split(command, posix=(sys.platform != "win32"))]
+        try:
+            cp = subprocess.run(
+                argv, capture_output=True, text=True, timeout=self.timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return DockerOutput(
+                success=False,
+                summary=f"docker {command}: timed out after {self.timeout}s",
+                error="timeout",
+            ).model_dump_json()
+        except FileNotFoundError:
+            return DockerOutput(
+                success=False,
+                summary="docker binary not found on PATH (install Docker Desktop)",
+                error="not_found",
+            ).model_dump_json()
+        except Exception as e:
+            return DockerOutput(
+                success=False,
+                summary=f"docker {command}: {e}",
+                error=str(e),
+            ).model_dump_json()
+
+        stdout = (cp.stdout or "").strip()
+        stderr = (cp.stderr or "").strip()
+        ok = cp.returncode == 0
+        payload = DockerOutput(
+            success=ok,
+            summary=(f"docker {command}: ok" if ok
+                     else f"docker {command}: exit {cp.returncode}"),
+            error=None if ok else stderr,
+        ).model_dump()
+        payload["stdout"] = stdout
+        payload["stderr"] = stderr
+        payload["exit_code"] = cp.returncode
+        return json.dumps(payload)
