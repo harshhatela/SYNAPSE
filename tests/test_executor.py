@@ -70,3 +70,48 @@ def test_run_plan_caps_replans_at_two():
     plan = _plan("s1")
     results = asyncio.run(ex.run_plan(plan, session_id="s"))
     assert planner.replan.call_count <= 2
+
+
+def test_tool_output_signals_failure_parses_json():
+    # Real Pydantic-serialized failures should be detected.
+    assert Executor._tool_output_signals_failure('{"success": false, "summary": "x"}') is True
+    assert Executor._tool_output_signals_failure('{"success":  false}') is True
+    assert Executor._tool_output_signals_failure('{"success": true}') is False
+    # Non-JSON should not register as failure (the substring heuristic would).
+    assert Executor._tool_output_signals_failure('error: "success": false in log') is False
+    # Empty or malformed payloads return False without raising.
+    assert Executor._tool_output_signals_failure("") is False
+    assert Executor._tool_output_signals_failure("not json") is False
+
+
+def test_run_plan_replan_skips_already_completed_steps():
+    # First plan: 2 steps. Step 1 succeeds, step 2 fails twice -> replan.
+    # Replan returns a plan containing step_id=1 (already done) + step_id=3 (new work).
+    # Step 1 must be skipped; step 3 must run.
+    replanned_calls = []
+    def record_replan(*args, **kwargs):
+        replanned_calls.append(kwargs)
+        return Plan(reasoning="r", steps=[
+            PlanStep(step_id=1, description="already done", intended_tool="reasoning", success_criteria="ok"),
+            PlanStep(step_id=3, description="new work", intended_tool="reasoning", success_criteria="ok"),
+        ])
+
+    ex, sio, planner = _exec([
+        ("done", "step1 ok", []),         # step 1 of original plan
+        ("failed", "step2 fail", []),      # step 2 first attempt
+        ("failed", "step2 retry fail", []),  # step 2 retry
+        ("done", "step3 ok", []),          # step 3 of replanned plan (step 1 is skipped)
+    ])
+    planner.replan = MagicMock(side_effect=record_replan)
+
+    plan = _plan("step one", "step two")
+    results = asyncio.run(ex.run_plan(plan, session_id="s"))
+
+    # We should NOT have a second StepResult for step_id=1.
+    step1_results = [r for r in results if r.step_id == 1]
+    assert len(step1_results) == 1
+    assert step1_results[0].summary == "step1 ok"
+    # Step 3 from the replanned plan must have run.
+    assert any(r.step_id == 3 and r.status == "done" for r in results)
+    # _run_react_step was called exactly 4 times (1 + 2 + 1), not 5.
+    assert ex._run_react_step.call_count == 4

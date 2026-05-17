@@ -1,5 +1,5 @@
+import json
 import logging
-from typing import Any
 from langgraph.prebuilt import create_react_agent
 
 from agent_prompts import build_prompt
@@ -89,7 +89,7 @@ class Executor:
             elif kind == "on_tool_end":
                 output = str(event["data"].get("output", ""))
                 tool_outputs.append({"tool": event["name"], "output": output[:500]})
-                if '"success": false' in output or '"success":false' in output:
+                if self._tool_output_signals_failure(output):
                     any_tool_fail = True
                 await self.sio.emit("tool_call", {
                     "tool": event["name"], "status": "done",
@@ -108,12 +108,26 @@ class Executor:
                 return line.split(":", 1)[1].strip()
         return (text.strip()[:200] or "(no summary)")
 
+    @staticmethod
+    def _tool_output_signals_failure(output: str) -> bool:
+        """Tools serialize Pydantic models to JSON; success is the source of truth."""
+        try:
+            data = json.loads(output)
+        except (json.JSONDecodeError, TypeError):
+            return False
+        return data.get("success") is False if isinstance(data, dict) else False
+
     async def run_plan(self, plan: Plan, session_id: str) -> list[StepResult]:
         results: list[StepResult] = []
         current_plan = plan
         i = 0
         while i < len(current_plan.steps):
             step = current_plan.steps[i]
+            done_ids = {r.step_id for r in results if r.status == "done"}
+            if step.step_id in done_ids:
+                # Replan may include a step_id we already completed. Skip it.
+                i += 1
+                continue
             await self._emit_status(step.step_id, "running")
 
             status, summary, outs = await self._run_react_step(
