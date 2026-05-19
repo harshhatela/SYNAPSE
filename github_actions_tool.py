@@ -60,18 +60,23 @@ def _trigger_workflow(owner, repo, workflow_id, ref, inputs):
     with httpx.Client() as client:
         client.post(url, headers=_headers(), json={"ref": ref, "inputs": inputs}).raise_for_status()
     time.sleep(2)
-    run_id = _find_latest_run_id(owner, repo, workflow_id)
+    run_id = _find_latest_run_id(owner, repo, workflow_id, ref)
     run_url = f"https://github.com/{owner}/{repo}/actions/runs/{run_id}" if run_id else None
     return GitHubActionsOutput(
-        success=True, summary=f"Workflow '{workflow_id}' triggered on {ref}. Run ID: {run_id}",
+        success=run_id is not None,
+        summary=f"Workflow '{workflow_id}' triggered on {ref}. Run ID: {run_id}",
         run_id=run_id, run_url=run_url, status="queued",
+        error=None if run_id else "Workflow dispatched, but no matching run was found yet",
     ).model_dump_json()
 
 
-def _find_latest_run_id(owner, repo, workflow_id) -> int | None:
+def _find_latest_run_id(owner, repo, workflow_id, ref=None) -> int | None:
     url = f"{GITHUB_API}/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs"
     with httpx.Client() as client:
-        resp = client.get(url, headers=_headers(), params={"per_page": 1})
+        params = {"per_page": 5}
+        if ref:
+            params["branch"] = ref
+        resp = client.get(url, headers=_headers(), params=params)
         resp.raise_for_status()
         runs = resp.json().get("workflow_runs", [])
         return runs[0]["id"] if runs else None
@@ -79,12 +84,16 @@ def _find_latest_run_id(owner, repo, workflow_id) -> int | None:
 
 def _get_run_status(owner, repo, run_id):
     with httpx.Client() as client:
-        data = client.get(
+        run_resp = client.get(
             f"{GITHUB_API}/repos/{owner}/{repo}/actions/runs/{run_id}", headers=_headers()
-        ).json()
-        jobs = client.get(
+        )
+        run_resp.raise_for_status()
+        jobs_resp = client.get(
             f"{GITHUB_API}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs", headers=_headers()
-        ).json().get("jobs", [])[:5]
+        )
+        jobs_resp.raise_for_status()
+        data = run_resp.json()
+        jobs = jobs_resp.json().get("jobs", [])[:5]
 
     status = data["status"]
     conclusion = data.get("conclusion")
@@ -109,7 +118,9 @@ def _get_run_status(owner, repo, run_id):
 def _list_runs(owner, repo, workflow_id):
     url = f"{GITHUB_API}/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs"
     with httpx.Client() as client:
-        runs = client.get(url, headers=_headers(), params={"per_page": 5}).json().get("workflow_runs", [])
+        resp = client.get(url, headers=_headers(), params={"per_page": 5})
+        resp.raise_for_status()
+        runs = resp.json().get("workflow_runs", [])
     return GitHubActionsOutput(
         success=True,
         summary=f"Found {len(runs)} recent runs for {workflow_id}",

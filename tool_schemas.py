@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Literal
 
 
@@ -114,6 +114,15 @@ class KubectlOutput(ToolOutput):
     exit_code: int
 
 
+# ─── PowerShell ───────────────────────────────────────────
+
+class PowerShellOutput(ToolOutput):
+    tool_name: str = "powershell"
+    stdout: str
+    stderr: Optional[str] = None
+    exit_code: int
+
+
 # ─── Planner / Executor ─────────────────────────────────
 
 class PlanStep(BaseModel):
@@ -130,4 +139,4 @@ class StepResult(BaseModel):
     step_id: int
     status: Literal["done", "failed"]
     summary: str
-    tool_outputs: list[dict] = []
+    tool_outputs: list[dict] = Field(default_factory=list)

@@ -2,9 +2,9 @@ import json
 import shlex
 import logging
 import subprocess
-import sys
 from typing import Optional
 
+from command_policy import enforce_command_policy
 from tool_schemas import DockerOutput
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,21 @@ class LocalDockerAgent:
             return f"docker detect failed: {e}"
 
     def run_command(self, command: str) -> str:
-        """Run `docker <command>` locally. Returns JSON-serialized DockerOutput."""
-        argv = ["docker", *shlex.split(command, posix=(sys.platform != "win32"))]
+        """Run `docker <command>` locally. Returns JSON-serialized DockerOutput.
+
+        Docker argument conventions are POSIX (quoted strings for `bash -c "..."`,
+        no backslash escaping) regardless of the host OS, so we always parse with
+        posix=True — using posix=False on Windows splits quoted arguments wrong.
+        """
+        command, policy_error = enforce_command_policy(command, "docker")
+        if policy_error:
+            return DockerOutput(
+                success=False,
+                summary="Docker command blocked by safety policy",
+                error=policy_error,
+            ).model_dump_json()
+
+        argv = ["docker", *shlex.split(command, posix=True)]
         try:
             cp = subprocess.run(
                 argv, capture_output=True, text=True, timeout=self.timeout,

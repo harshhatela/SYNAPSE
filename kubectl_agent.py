@@ -1,10 +1,10 @@
 import json
 import shlex
-import sys
 import logging
 import subprocess
 from typing import Optional
 
+from command_policy import enforce_command_policy
 from tool_schemas import KubectlOutput
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,19 @@ class LocalKubectlAgent:
             return f"kubectl detect failed: {e}"
 
     def run_command(self, command: str) -> str:
-        argv = ["kubectl", *shlex.split(command, posix=(sys.platform != "win32"))]
+        command, policy_error = enforce_command_policy(command, "kubectl")
+        if policy_error:
+            return KubectlOutput(
+                success=False,
+                summary="kubectl command blocked by safety policy",
+                stdout="",
+                stderr=policy_error,
+                exit_code=-1,
+                error=policy_error,
+            ).model_dump_json()
+
+        # kubectl follows POSIX argument conventions; always parse with posix=True.
+        argv = ["kubectl", *shlex.split(command, posix=True)]
         try:
             cp = subprocess.run(
                 argv, capture_output=True, text=True, timeout=self.timeout,

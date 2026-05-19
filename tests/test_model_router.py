@@ -12,18 +12,34 @@ def test_model_router_raises_if_no_providers():
             ModelRouter()
 
 def test_model_router_selects_preferred_provider():
-    """Router returns the preferred provider when explicitly set."""
+    """Router uses the preferred provider as primary, wrapping the rest as fallbacks."""
     mock_groq = MagicMock()
     mock_gemini = MagicMock()
     with patch.dict(os.environ, {"GROQ_API_KEY": "test", "GEMINI_API_KEY": "test", "MODEL_BACKEND": "gemini"}):
-        with patch("model_router.ModelRouter._build_clients") as mock_build:
+        with patch("model_router.ModelRouter._build_clients"):
             from model_router import ModelRouter
             router = ModelRouter.__new__(ModelRouter)
             router.preferred = "gemini"
             router._clients = {"groq": mock_groq, "gemini": mock_gemini}
             router._current_provider = None
-            result = router.get_llm()
-            assert result is mock_gemini
+            router.get_llm()
+            mock_gemini.with_fallbacks.assert_called_once()
+            mock_groq.with_fallbacks.assert_not_called()
+            assert router.current_provider == "gemini"
+
+
+def test_model_router_returns_bare_client_when_only_one_provider():
+    """With a single provider available, get_llm returns it unwrapped (no fallbacks needed)."""
+    mock_groq = MagicMock()
+    with patch("model_router.ModelRouter._build_clients"):
+        from model_router import ModelRouter
+        router = ModelRouter.__new__(ModelRouter)
+        router.preferred = "auto"
+        router._clients = {"groq": mock_groq}
+        router._current_provider = None
+        result = router.get_llm()
+        assert result is mock_groq
+        mock_groq.with_fallbacks.assert_not_called()
 
 def test_model_router_skips_rate_limited_provider():
     """invoke_with_fallback skips a provider that raises a 429 error."""

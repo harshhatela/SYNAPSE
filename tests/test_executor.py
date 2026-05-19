@@ -17,8 +17,10 @@ def _exec(monkeyresults):
     """Build an Executor that returns canned ReAct results in order."""
     sio = MagicMock(); sio.emit = AsyncMock()
     planner = MagicMock()
+    router = MagicMock()
+    router.get_clients_ordered = MagicMock(return_value=[("mock", MagicMock())])
     ex = Executor(
-        llm=MagicMock(), tools=[], memory=MagicMock(),
+        router=router, tools=[], memory=MagicMock(),
         sio=sio, sid="sid1", planner=planner,
     )
     ex._run_react_step = AsyncMock(side_effect=list(monkeyresults))
@@ -59,8 +61,14 @@ def test_run_plan_failure_triggers_replan():
     plan = _plan("step one", "step two")
     results = asyncio.run(ex.run_plan(plan, session_id="s"))
     assert planner.replan.called
+    assert ex.final_plan == new_plan
     statuses = [r.status for r in results]
     assert "done" in statuses
+
+
+def test_extract_intended_tool_from_prompt():
+    prompt = "CURRENT STEP 1: x\nSuccess criteria: ok\nIntended tool: RunDockerCommand\n"
+    assert Executor._extract_intended_tool(prompt) == "RunDockerCommand"
 
 
 def test_run_plan_caps_replans_at_two():
@@ -70,6 +78,30 @@ def test_run_plan_caps_replans_at_two():
     plan = _plan("s1")
     results = asyncio.run(ex.run_plan(plan, session_id="s"))
     assert planner.replan.call_count <= 2
+
+
+def test_run_react_step_fails_over_to_next_provider_on_rate_limit():
+    """When the first provider 429s, the executor must try the next provider."""
+    sio = MagicMock(); sio.emit = AsyncMock()
+    planner = MagicMock()
+    router = MagicMock()
+    groq, gemini = MagicMock(), MagicMock()
+    router.get_clients_ordered = MagicMock(return_value=[("groq", groq), ("gemini", gemini)])
+    ex = Executor(
+        router=router, tools=[], memory=MagicMock(),
+        sio=sio, sid="sid1", planner=planner,
+    )
+    attempts: list = []
+    async def fake_attempt(client, prompt):
+        attempts.append(client)
+        if client is groq:
+            raise Exception("Error code: 429 rate limit reached")
+        return ("done", "ok", [{"tool": "x", "output": "{}"}])
+    ex._run_one_attempt = fake_attempt
+    status, summary, _ = asyncio.run(ex._run_react_step("step prompt"))
+    assert status == "done"
+    assert summary == "ok"
+    assert attempts == [groq, gemini]
 
 
 def test_tool_output_signals_failure_parses_json():

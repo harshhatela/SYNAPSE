@@ -2,16 +2,30 @@ import subprocess
 import os
 import shlex
 import json
+from command_policy import enforce_command_policy
 from tool_schemas import AWSOutput
 
 class AWSAgent:
     """A tool to interact with AWS by executing AWS CLI commands."""
-    def __init__(self):
+    def __init__(self, timeout: int = 300):
         self.region = os.getenv("AWS_DEFAULT_REGION")
-        if not self.region:
-            raise ValueError("AWS_DEFAULT_REGION not set in .env file.")
+        self.timeout = timeout
 
     def run_cli(self, command: str) -> str:
+        if not self.region:
+            return AWSOutput(
+                success=False, summary="AWS not configured",
+                raw_output="AWS_DEFAULT_REGION not set in environment.",
+                error="AWS_DEFAULT_REGION not set",
+            ).model_dump_json()
+        command, policy_error = enforce_command_policy(command, "aws")
+        if policy_error:
+            return AWSOutput(
+                success=False,
+                summary="AWS command blocked by safety policy",
+                raw_output="",
+                error=policy_error,
+            ).model_dump_json()
         """
         Executes an AWS CLI command and returns the output.
         The input command should be the arguments that follow 'aws', 
@@ -28,17 +42,31 @@ class AWSAgent:
 
             # Build the final, correct command list
             final_command_list = ["aws"] + command_parts
-            
-            # Add the region if it's not already specified in the command
-            if "--region" not in final_command_list:
-                final_command_list.extend(["--region", self.region])
 
-            # Execute the command
+            # Force the env-configured region. The LLM frequently hardcodes
+            # `--region us-east-1` in commands; strip any LLM-supplied --region
+            # and inject AWS_DEFAULT_REGION so the user's .env is authoritative.
+            cleaned: list[str] = []
+            i = 0
+            while i < len(final_command_list):
+                tok = final_command_list[i]
+                if tok == "--region":
+                    i += 2  # skip flag + its value
+                    continue
+                if tok.startswith("--region="):
+                    i += 1
+                    continue
+                cleaned.append(tok)
+                i += 1
+            final_command_list = cleaned + ["--region", self.region]
+
+            # Execute the command (bounded so `aws ec2 wait ...` cannot hang forever).
             result = subprocess.run(
                 final_command_list,
                 capture_output=True,
                 text=True,
-                check=True # This will raise an exception for non-zero exit codes
+                check=True,
+                timeout=self.timeout,
             )
             raw_stdout = result.stdout.strip() if result.stdout else ""
             parsed = None
@@ -52,6 +80,11 @@ class AWSAgent:
                 parsed_data=parsed,
             ).model_dump_json()
 
+        except subprocess.TimeoutExpired:
+            return AWSOutput(
+                success=False, summary=f"AWS command timed out after {self.timeout}s",
+                raw_output="", error="timeout",
+            ).model_dump_json()
         except subprocess.CalledProcessError as e:
             raw_stderr = e.stderr.strip() if e.stderr else f"Error executing command: '{' '.join(e.cmd)}'"
             return AWSOutput(
