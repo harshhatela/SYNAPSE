@@ -131,7 +131,7 @@ SYNAPSE can execute powerful local, remote, cloud, and Kubernetes commands. The 
 │   ┌──────────────────────────────────────────────────────┐  │
 │   │  React + TypeScript + Tailwind CSS                   │  │
 │   │  ┌─────────────────┐  ┌──────────────────────────┐   │  │
-│   │  │   PlanPanel      │  │       ChatDisplay       │   │  │
+│   │  │   PlanPanel     │  │       ChatDisplay        │   │  │
 │   │  │  (live steps +  │  │  (messages + typing      │   │  │
 │   │  │   status icons) │  │   indicator)             │   │  │
 │   │  └─────────────────┘  └──────────────────────────┘   │  │
@@ -157,9 +157,9 @@ SYNAPSE can execute powerful local, remote, cloud, and Kubernetes commands. The 
 │   └─────────────────────────────────┬──────────────────┘    │
 │                                     │                       │
 │   ┌─────────────────────────────────▼──────────────────┐    │
-│   │                  Model Router                       │   │
-│   │ Ollama slot 1 → Groq → Gemini → Cerebras → Ollama 2 │   │
-│   └─────────────────────────────────────────────────────┘   │
+│   │                  Model Router                      │    │
+│   │ Ollama slot 1 → Groq → Gemini → Cerebras → Ollama 2│    │
+│   └────────────────────────────────────────────────────┘    │
 │                                                             │
 │   Tools                                                     │
 │   ├─ LinuxAgent          (paramiko SSH → RHEL server)       │
